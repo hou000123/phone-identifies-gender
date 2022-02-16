@@ -10,15 +10,18 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"bytes"
 )
 
 const (
 	searchPageXmlName  = "%s_search.xml"
 	searchPage2XmlName = "%s_search2.xml"
 	resultPageXmlName  = "%s_result.xml"
+	resultScreenName  = "%s_result.png"
 
 	searchDir = "./runtime/search_xml/"
 	resultDir = "./runtime/result_xml/"
+	ScreenDir = "./runtime/result_png/"
 )
 
 var rw sync.RWMutex
@@ -84,6 +87,9 @@ type Control struct {
 	ClearInputPosition *Position
 	// 搜索按钮坐标
 	SearchButtonPosition *Position
+
+
+	GenderPosition *Position
 }
 
 func NewControl(adb *adb.Device, serial string) (*Control, error) {
@@ -127,7 +133,7 @@ func (c *Control) initInputPosition() error {
 		return fmt.Errorf("获取搜索页xml失败: %s", err)
 	}
 
-	position, err := NewXml(xml).Position("com.tencent.mm:id/bhn")
+	position, err := NewXml(xml).Position("com.tencent.mm:id/bxz")
 	if err != nil {
 		return fmt.Errorf("获取手机号输入框坐标失败: %s\n, 请把微信页面定到搜索页,依次点击通信录->新的朋友->上方的搜索框", err)
 	}
@@ -138,7 +144,7 @@ func (c *Control) initInputPosition() error {
 
 // 初始化清除输入框内容坐标
 func (c *Control) initClearInputPosition(xml *Xml) error {
-	position, err := xml.Position("com.tencent.mm:id/asq")
+	position, err := xml.Position("com.tencent.mm:id/b3g")
 	if err != nil {
 		return fmt.Errorf("获取清除手机号输入框按钮坐标失败: %s", err)
 	}
@@ -149,12 +155,24 @@ func (c *Control) initClearInputPosition(xml *Xml) error {
 
 // 初始化搜索按钮坐标
 func (c *Control) initSearchButtonPosition(xml *Xml) error {
-	position, err := xml.Position("com.tencent.mm:id/ga1")
+	position, err := xml.Position("com.tencent.mm:id/ior")
 	if err != nil {
 		return fmt.Errorf("获取搜索按钮坐标失败: %s", err)
 	}
 	c.SearchButtonPosition = position
 	log.Println("搜索按钮坐标:", c.SearchButtonPosition)
+	return nil
+}
+
+
+func (c *Control) SetGenderPosition(xml *Xml) error {
+	position, err := xml.Position("com.tencent.mm:id/bd7")
+	if err != nil {
+		fmt.Errorf("获取性別坐标失败: %s", err)
+		return nil
+	}
+	c.GenderPosition = position
+	log.Println("性別坐标:", c.GenderPosition)
 	return nil
 }
 
@@ -181,10 +199,20 @@ func (c *Control) xml(localPath, phonePath string) (string, error) {
 func (c *Control) phoneSearchPageXmlPath() string {
 	return fmt.Sprintf("/sdcard/"+searchPageXmlName, c.deviceSerial)
 }
+ //
+func (c *Control) phoneScreenPath(phone string) string {
+	return fmt.Sprintf("/sdcard/"+resultScreenName, phone)
+}
+
 
 // 用于手机端搜索页的 xml 上传
 func (c *Control) localSearchPageXmlPath() string {
 	return fmt.Sprintf(searchDir+searchPageXmlName, c.deviceSerial)
+}
+
+// 用于手机端PNG 上传
+func (c *Control) localScreenPath(phone string) string {
+	return fmt.Sprintf(ScreenDir+resultScreenName, phone)
 }
 
 // 手机端搜索页输入后 xml 保存路径, 用于获取清除和搜索按钮的坐标
@@ -265,6 +293,14 @@ func (c *Control) search(phone string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("获取搜索结果页 xml 失败: %s", err)
 	}
+
+    //解釋性別位置失敗
+    newXml := NewXml(xml)
+    if err := c.SetGenderPosition(newXml); err != nil {
+        return xml, fmt.Errorf("解釋性別位置失敗失败: %s", err)
+    }
+
+
 	return xml, nil
 }
 
@@ -286,27 +322,86 @@ func (c *Control) Reset() error {
 	return nil
 }
 
+func (c *Control) Screen(localPath, phonePath string) (string, error) {
+	
+	_, err := c.RunCommand("screencap", phonePath)
+	if err != nil {
+		return "", err
+	}
+
+	cmd := exec.Command("adb", "-s", c.deviceSerial, "pull", phonePath, localPath)
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+
+	bytes, err := ioutil.ReadFile(localPath)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
+}
+
 func (c *Control) Gender(phone string) (string, error) {
 	xml, err := c.search(phone)
 	if err != nil {
 		return "", err
 	}
-	genderRegexp := regexp.MustCompile(fmt.Sprintf(`%s.*?content-desc="(男|女|未知)"`, "com.tencent.mm:id/b2c"))
-	params := genderRegexp.FindStringSubmatch(xml)
-	if len(params) == 2 {
-		return params[1], nil
-	}
-
-	if match, _ := regexp.MatchString("该用户不存在", xml); match {
+	// genderRegexp := regexp.MustCompile(fmt.Sprintf(`%s.*?content-desc="(男|女|未知)"`, "com.tencent.mm:id/ba4"))
+	// params := genderRegexp.FindStringSubmatch(xml)
+	// if len(params) == 2 {
+	// 	return params[1], nil
+	// }
+ 
+	if match, _ := regexp.MatchString("不存在", xml); match {
 		if err := c.ClickInput(); err != nil { // 这里触发输入法，防止后续返回到通讯录页
 			return "", err
 		}
 		return "该用户不存在", nil
 	}
 
-	if match, _ := regexp.MatchString("操作过于频繁", xml); match {
+	if match, _ := regexp.MatchString("操作", xml); match {
 		return "", fmt.Errorf("微信提示操作过于频繁")
 	}
+    
+
+
+    png2, err := c.Screen(c.localScreenPath(phone), c.phoneScreenPath(phone))
+	if err != nil {
+		return "",fmt.Errorf("获取SCREENCAP失败: %s", err)
+	}
+
+
+    pixels, err := getPixels(bytes.NewReader([]byte(png2)))
+
+    if err != nil {
+        return "",fmt.Errorf("获取png失败: %s", err)
+    }
+
+    fmt.Print(len(pixels),"\n")
+
+    fmt.Print(len(pixels[1]),"\n")
+
+    // for i, first := range pixels {
+    //     for j, value := range first {
+    //     	if value.R == 88  {
+    //     		fmt.Println(value , "\n")
+
+    //     		fmt.Println(i ,  " ",j )
+    //     	}
+    //     }
+    // }
+    
+    fmt.Print(pixels[c.GenderPosition.Y][c.GenderPosition.X],"\n")
+
+    pixelsRGB := pixels[c.GenderPosition.Y][c.GenderPosition.X]
+    if pixelsRGB.R == 88 && pixelsRGB.G == 155 && pixelsRGB.B == 238 {
+    	return "男", nil
+    }
+
+    if pixelsRGB.R == 243 && pixelsRGB.G == 126 && pixelsRGB.B == 125 {
+    	return "男", nil
+    }
+
 	return "未知", nil
 }
 

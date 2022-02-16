@@ -14,8 +14,8 @@ func main() {
 
 	phones := []string{
 		"18339258680",
-		"133456789",
-		"18339258680",
+		"qazplm890_" ,
+         "183392" ,
 	}
 	for _, p := range phones {
 		wg.Add(1)
